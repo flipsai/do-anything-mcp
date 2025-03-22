@@ -33,12 +33,32 @@ def execute_command(connection, command_type: str, params: Dict[str, Any] = None
         if not image_path:
             result = {"success": False, "message": "Image path is required"}
         else:
-            base64_image = flux_schnell_command.get_image_base64(image_path)
-            result = {
-                "success": True if base64_image else False,
-                "image_data": base64_image,
-                "message": "Image encoded successfully" if base64_image else "Failed to encode image"
-            }
+            # Load the image directly using PIL to ensure proper format
+            from PIL import Image as PILImage
+            import io
+            import base64
+            
+            try:
+                # Open the image with PIL
+                pil_image = PILImage.open(image_path)
+                
+                # Convert to bytes
+                img_byte_arr = io.BytesIO()
+                pil_image.save(img_byte_arr, format='PNG')
+                img_bytes = img_byte_arr.getvalue()
+                # Encode to base64 (backwards compatibility)
+                base64_image = base64.b64encode(img_bytes).decode('utf-8')
+                
+                result = {
+                    "success": True,
+                    "image_data": base64_image,
+                    "message": "Image encoded successfully",
+                    "format": "png"
+                }
+                
+            except Exception as e:
+                logger.error(f"Error processing image: {str(e)}")
+                result = {"success": False, "message": f"Failed to process image: {str(e)}"}
     else:
         raise Exception(f"Command not implemented: {command_type}")
             

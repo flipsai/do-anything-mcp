@@ -5,6 +5,8 @@ import os
 import base64
 from mcp.server.fastmcp import Context
 from mcp.server.fastmcp import Image
+from io import BytesIO
+from PIL import Image as PILImage
 
 # Configure logging
 logger = logging.getLogger("DoAnythingMCPTools")
@@ -76,7 +78,7 @@ def register_tools(mcp):
         num_inference_steps: int = 4,
         seed: int = 0,
         randomize_seed: bool = True
-    ):
+    ) -> Image:
         """
         Call the FLUX.1-schnell endpoint /infer to generate an image
         
@@ -100,7 +102,7 @@ def register_tools(mcp):
             })
             
             if not result.get("success", False):
-                return {"error": f"Error generating image: {result.get('message', 'Unknown error')}"}
+                raise Exception(f"Error generating image: {result.get('message', 'Unknown error')}")
                 
             # Get the image path
             image_path = result.get("image_path")
@@ -109,16 +111,44 @@ def register_tools(mcp):
             image_result = connection.execute_command("flux_get_image", {"image_path": image_path})
             
             if not image_result.get("success", False):
-                return {"error": f"Error retrieving image: {image_result.get('message', 'Unknown error')}"}
+                raise Exception(f"Error retrieving image: {image_result.get('message', 'Unknown error')}")
                 
             # Get the binary image data from the result
-            image_data = base64.b64decode(image_result.get("image_data", ""))
+            base64_data = image_result.get("image_data", "")
             
-            # Create an Image object and return its image content
-            image = Image(data=image_data)
-            return image.to_image_content()
+            # Resize the image if it's too large
+            # The max response size is around 1MB, and base64 encoding adds ~33% overhead
+            # So we should aim for an image that's around 750KB when base64 encoded
+            if len(base64_data) > 750000:
+                # Decode the base64 data
+                image_bytes = base64.b64decode(base64_data)
+                img = PILImage.open(BytesIO(image_bytes))
+                
+                # Calculate the resize factor needed
+                # We aim for ~750KB after base64 encoding
+                current_size = len(base64_data)
+                resize_factor = (750000 / current_size) ** 0.5  # Square root for 2D scaling
+                
+                # Resize the image
+                new_width = int(img.width * resize_factor)
+                new_height = int(img.height * resize_factor)
+                img = img.resize((new_width, new_height), PILImage.LANCZOS)
+                
+                # Convert back to base64
+                buffer = BytesIO()
+                img.save(buffer, format="PNG", optimize=True)
+                base64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            
+            # Create an Image object as expected by the MCP framework
+            # Convert base64 string to bytes for the data parameter
+            image_data = base64.b64decode(base64_data)
+            return Image(data=image_data, format="png")
+            
         except Exception as e:
-            return {"error": f"Error: {str(e)}"}
+            logger.error(f"Error in FLUX_1_schnell_infer: {str(e)}")
+            # Create a TextContent object for the error
+            from mcp.types import TextContent
+            return TextContent(type="text", text=f"Error generating image: {str(e)}")
             
     # Additional tools can be added here
     
