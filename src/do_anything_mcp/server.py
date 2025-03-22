@@ -40,6 +40,11 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
         logger.error("Failed to initialize connection")
         raise ConnectionError("Could not initialize the MCP connection")
     
+    # Ensure working directory exists
+    work_dir = os.environ.get("MCP_WORK_DIR", os.path.join(os.getcwd(), "mcp_data"))
+    os.makedirs(work_dir, exist_ok=True)
+    logger.info(f"Using working directory: {work_dir}")
+    
     logger.info("Do Anything MCP Server started successfully")
     
     yield {"status": "running", "message": "Do Anything MCP Server is running"}
@@ -47,8 +52,12 @@ async def server_lifespan(server: FastMCP) -> AsyncIterator[Dict[str, Any]]:
     # Cleanup on shutdown
     logger.info("Shutting down Do Anything MCP Server")
 
-# Setup the MCP server
-mcp = FastMCP(lifespan=server_lifespan)
+# Get timeout from environment or use default (increased from default 10 seconds to 120 seconds)
+DEFAULT_TIMEOUT = 120  # 2 minutes
+timeout = int(os.environ.get("MCP_TIMEOUT", DEFAULT_TIMEOUT))
+
+# Setup the MCP server with increased timeout
+mcp = FastMCP(lifespan=server_lifespan, timeout=timeout)
 
 # Register all tools
 register_tools(mcp)
@@ -58,9 +67,28 @@ def main():
     parser = argparse.ArgumentParser(description="Do Anything MCP Server")
     parser.add_argument("--host", default="localhost", help="Host to bind the server to")
     parser.add_argument("--port", type=int, default=9877, help="Port to listen on")
+    parser.add_argument("--work-dir", default=os.environ.get("MCP_WORK_DIR", os.path.join(os.getcwd(), "mcp_data")),
+                        help="Working directory for file storage")
+    parser.add_argument("--hf-token", default=os.environ.get("HF_TOKEN"),
+                        help="Hugging Face token for accessing private spaces")
+    parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT,
+                        help=f"Timeout in seconds for tool operations (default: {DEFAULT_TIMEOUT})")
+    
     args = parser.parse_args()
     
+    # Set environment variables for other components to use
+    os.environ["MCP_WORK_DIR"] = args.work_dir
+    if args.hf_token:
+        os.environ["HF_TOKEN"] = args.hf_token
+    
+    # Set timeout globally
+    os.environ["MCP_TIMEOUT"] = str(args.timeout)
+    global timeout
+    timeout = args.timeout
+    
     logger.info(f"Starting Do Anything MCP Server on {args.host}:{args.port}")
+    logger.info(f"Using working directory: {args.work_dir}")
+    logger.info(f"Tool operation timeout: {timeout} seconds")
     
     # Note: FastMCP.run() doesn't accept host/port arguments
     try:
@@ -72,4 +100,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()
